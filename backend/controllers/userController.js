@@ -1,3 +1,4 @@
+import crypto from "crypto"; // Add this import at the top
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import generateToken from "../utils/generateToken.js";
@@ -286,4 +287,49 @@ export const getMe = (req, res) => {
     return res.status(401).json({ message: "Not authenticated" });
   }
   res.json(req.user);
+};
+
+// Request Password Reset Token
+export const requestPasswordReset = async (req, res) => {
+  const { emailOrUsername } = req.body;
+  try {
+    const user = await User.findOne({ $or: [{ email: emailOrUsername }, { username: emailOrUsername }] });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await user.save();
+    console.log(`Simulated sending reset token ${token} to ${emailOrUsername}`); // For testing
+    res.json({ message: "Reset token sent" }); // Don’t return token for security
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// Reset Password with Token
+export const resetPasswordWithToken = async (req, res) => {
+  const { token, newPassword } = req.body;
+  try {
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: new Date() },
+    });
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+    if (!/^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z\d]{8,}$/.test(newPassword)) {
+      return res.status(400).json({ message: "Password must be alphanumeric and at least 8 characters" });
+    }
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    user.failedAttempts = 0; // Clear lockout
+    user.lockedUntil = null; // Clear lockout
+    await user.save();
+    res.json({ message: "Password reset successful" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
 };
